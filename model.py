@@ -6,21 +6,23 @@ from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
 import numpy as np
 import matplotlib.pyplot as plt
 
+# change to your needs
 fold = '1'
 label = '00.0010'
-epochs = 2
+epochs = 15
 
 # Train Dataset
-titanic = pd.read_csv("C:/Users/richa/Dropbox/FHNW/MSc/Thesis/Dataset/" + label + "/train_fold_" + fold + ".csv")
-titanic = titanic.sample(frac=1).reset_index(drop=True)
+medical = pd.read_csv("C:/Users/richa/Dropbox/FHNW/MSc/Thesis/Dataset/" + label + "/train_fold_" + fold + ".csv")
+medical = medical.sample(frac=1).reset_index(drop=True)
 
-print(titanic.head(3))
+# View at CSV to make sure it's alright
+print(medical.head(3))
 
-preprocessed_text_inputs = []
+preprocessed_train_inputs = []
 preprocessed_test_inputs = []
 
-titanic_features = titanic.copy()
-titanic_labels = titanic_features.pop(label)
+medical_features = medical.copy()
+medical_labels = medical_features.pop(label)
 
 # Test Dataset
 proof = pd.read_csv("C:/Users/richa/Dropbox/FHNW/MSc/Thesis/Dataset/" + label + "/val_fold_" + fold + ".csv")
@@ -34,7 +36,8 @@ proof_labels = proof_features.pop(label)
 
 inputs = {}
 
-for name, column in titanic_features.items():
+# Create Input Tensor for Train & Test
+for name, column in medical_features.items():
   dtype = column.dtype
   if dtype == object:
     dtype = tf.string
@@ -62,19 +65,19 @@ for column in proof_features:
         preprocessed_test_inputs.append(proof_features[column])
 
 
-for column in titanic_features:
-    if titanic_features[column].dtype == np.float64 or titanic_features[column].dtype == np.int64:
-        preprocessed_text_inputs.insert(0, titanic_features[column])
+for column in medical_features:
+    if medical_features[column].dtype == np.float64 or medical_features[column].dtype == np.int64:
+        preprocessed_train_inputs.insert(0, medical_features[column])
     else:
-        preprocessed_text_inputs.append(titanic_features[column])
+        preprocessed_train_inputs.append(medical_features[column])
 
 numeric_inputs = {name:input for name,input in inputs.items()
                   if input.dtype==tf.float32}
 
-
+# Concatenate and Normalization of Numerical input
 x = layers.Concatenate()(list(numeric_inputs.values()))
 norm = preprocessing.Normalization()
-norm.adapt(np.array(titanic[numeric_inputs.keys()]))
+norm.adapt(np.array(medical[numeric_inputs.keys()]))
 all_numeric_inputs = norm(x)
 
 # Model constants.
@@ -100,16 +103,19 @@ for name, input in inputs.items():
   if input.dtype == tf.float32:
     continue
   if input.dtype == tf.string:
-    
+
+    # Create dataset and layers for text input
     data = input
     layer = preprocessing.TextVectorization(max_tokens=max_features,output_mode="int",output_sequence_length=sequence_length)
-    dataset = tf.data.Dataset.from_tensor_slices((titanic_features['txt'], titanic_labels)).batch(32)
+    dataset = tf.data.Dataset.from_tensor_slices((medical_features['txt'], medical_labels)).batch(32)
     text_ds = dataset.map(lambda x, y: x)
     layer.adapt(text_ds)
     vectorized_text = layer(data)
     
     x = layers.Embedding(max_features + 1, embedding_dim)(vectorized_text)
     x = layers.Dropout(0.5)(x)
+
+    # Change to switch between CNN, LSTM or GRU
     # CNN
     x = layers.Conv1D(128, 7, padding="valid", activation="relu", strides=3)(x)
     x = layers.GlobalMaxPooling1D()(x)
@@ -120,31 +126,27 @@ for name, input in inputs.items():
     # GRU
     #x = layers.Bidirectional(layers.GRU(128, return_sequences=True))(x)
     #x = layers.GlobalMaxPooling1D()(x)
+
     x = layers.Dense(128, activation="relu")(x)
     all_text_inputs = layers.Dropout(0.5)(x)
 
-
+# Concatenate numeric and text inputs
 all_predictions = layers.Concatenate()([all_numeric_inputs, all_text_inputs])
 all_predictions = layers.Dense(1, activation="sigmoid")(all_predictions)
 
-titanic_features_dict = {name: np.array(value) 
-                         for name, value in titanic_features.items()}
+medical_features_dict = {name: np.array(value)
+                         for name, value in medical_features.items()}
 
-titanic_preprocessing = tf.keras.Model(inputs, all_predictions)
+medical_model = tf.keras.Model(inputs, all_predictions)
+medical_model.compile(loss="binary_crossentropy", optimizer="Adam", metrics="accuracy")
+history = medical_model.fit(x=preprocessed_train_inputs, y=medical_labels, epochs=epochs)
+medical_model.evaluate(x=preprocessed_test_inputs, y=proof_labels)
 
-titanic_preprocessing.compile(loss="binary_crossentropy", optimizer="Adam", metrics="accuracy")
-
-
-history = titanic_preprocessing.fit(x=preprocessed_text_inputs, y=titanic_labels, epochs=epochs)
-
-titanic_preprocessing.evaluate(x=preprocessed_test_inputs, y=proof_labels)
-
-
-tf.keras.utils.plot_model(model = titanic_preprocessing , rankdir="LR", dpi=72, show_shapes=True)
+tf.keras.utils.plot_model(model = medical_model , rankdir="LR", dpi=72, show_shapes=True)
 
 
 
-# Writing test_ds into list for further analysis
+# Writing out_fold_X into list for further analysis
 csv_list = [[], [], []]
 
 for element in preprocessed_test_inputs[115]:
@@ -155,13 +157,12 @@ for element in proof_labels:
     append_category = csv_list[1]
     append_category.append(element)
 
-predictions = titanic_preprocessing.predict(preprocessed_test_inputs).reshape(-1,)
+predictions = medical_model.predict(preprocessed_test_inputs).reshape(-1,)
 
 for prediction in predictions:
     append_prediction = csv_list[2]
     append_prediction.append(prediction)
 
-#print(csv_list)
 import pandas as pd
 df = pd.DataFrame(csv_list)
 df.to_csv("C:/Users/richa/Dropbox/FHNW/MSc/Thesis/Dataset/" + label + "/out_fold_" + fold + ".csv", index=False, header=False, sep="§")
